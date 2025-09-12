@@ -157,6 +157,14 @@ impl SourceDatabase for BuckCheckSourceDatabase {
             Handle::new(ModuleName::unknown(), module_path, self.sys_info.dupe())
         }
     }
+
+    fn add_file_to_open_set(&mut self, _: PathBuf) -> anyhow::Result<bool> {
+        Ok(false)
+    }
+
+    fn remove_file_from_open_set(&mut self, _: PathBuf) -> anyhow::Result<bool> {
+        Ok(false)
+    }
 }
 
 impl BuckCheckSourceDatabase {

@@ -589,6 +589,18 @@ impl ConfigFile {
         }
     }
 
+    pub fn add_remove_file_from_sourcedb(&self, file: &Path, added: bool) -> anyhow::Result<bool> {
+        let Some(source_db) = &mut *self.source_db.write() else {
+            return Ok(false);
+        };
+
+        if added {
+            source_db.add_file_to_open_set(file.to_path_buf())
+        } else {
+            source_db.remove_file_from_open_set(file.to_path_buf())
+        }
+    }
+
     pub fn setup_sourcedb_for_files(&self, files: &SmallSet<PathBuf>) -> anyhow::Result<()> {
         let Some(build_system) = &self.build_system else {
             return Ok(());

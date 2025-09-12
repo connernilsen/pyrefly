@@ -7,6 +7,7 @@
 
 use std::fmt;
 use std::path::Path;
+use std::path::PathBuf;
 
 use dupe::Dupe;
 use pyrefly_python::module_name::ModuleName;
@@ -63,4 +64,7 @@ pub trait SourceDatabase: Send + Sync + fmt::Debug {
     /// When no `ModulePath` can be found that corresponds, return a handle
     /// with [`ModuleName::unknown()`], and [`pyrefly_python::sys_info::SysInfo::default()`].
     fn handle_from_module_path(&self, module_path: ModulePath) -> Handle;
+
+    fn add_file_to_open_set(&mut self, path: PathBuf) -> anyhow::Result<bool>;
+    fn remove_file_from_open_set(&mut self, path: PathBuf) -> anyhow::Result<bool>;
 }

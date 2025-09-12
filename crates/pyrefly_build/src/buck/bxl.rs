@@ -5,6 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+use std::collections::HashSet;
 use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
@@ -46,39 +47,46 @@ pub struct BuckSourceDatabase {
     /// The set of items the sourcedb has been queried for. Not all of the targets
     /// or files listed here will necessarily appear in the sourcedb, for example,
     /// if the given target does not exist, or if the file is not tracked by Buck.
-    includes: SmallSet<Include>,
+    includes: HashSet<Include>,
+    cwd: PathBuf,
 }
 
 impl BuckSourceDatabase {
     pub fn new(cwd: PathBuf, files: &SmallSet<PathBuf>) -> anyhow::Result<Self> {
         let raw_db = query_source_db(files.iter(), &cwd)?;
-
-        Ok(Self::from_target_manifest_db(raw_db, files))
-    }
-
-    fn from_target_manifest_db(raw_db: TargetManifestDatabase, files: &SmallSet<PathBuf>) -> Self {
-        let db = raw_db.produce_map();
-        let mut path_lookup: SmallMap<PathBuf, Target> = SmallMap::new();
-        for (target, manifest) in db.iter() {
-            for source in manifest.srcs.values().flatten() {
-                if let Some(old_target) = path_lookup.get_mut(&**source) {
-                    let new_target = (&*old_target).min(target);
-                    *old_target = new_target.dupe();
-                } else {
-                    path_lookup.insert(source.to_path_buf(), target.dupe());
-                }
-            }
-        }
         let includes = files
             .into_iter()
             .map(|f| Include::Path(f.to_path_buf()))
             .collect();
-
-        BuckSourceDatabase {
-            db,
-            path_lookup,
+        let mut new = Self {
+            db: SmallMap::new(),
+            path_lookup: SmallMap::new(),
             includes,
+            cwd,
+        };
+
+
+        new.update_with_target_manifest(raw_db);
+        Ok(new)
+    }
+
+    
+
+    fn update_with_target_manifest(&mut self, raw_db: TargetManifestDatabase) -> bool {
+        let new_db = raw_db.produce_map();
+        let did_change = new_db == self.db;
+        self.db = new_db;
+        for (target, manifest) in self.db.iter() {
+            for source in manifest.srcs.values().flatten() {
+                if let Some(old_target) = self.path_lookup.get_mut(&**source) {
+                    let new_target = (&*old_target).min(target);
+                    *old_target = new_target.dupe();
+                } else {
+                    self.path_lookup.insert(source.to_path_buf(), target.dupe());
+                }
+            }
         }
+        did_change
     }
 
     fn handles_for_include(&self, include: &Include) -> Vec<Handle> {
@@ -86,19 +94,21 @@ impl BuckSourceDatabase {
             match include {
                 Include::Target(target) => {
                     let manifest = this.db.get(target)?;
-                    Some(manifest
-                        .srcs
-                        .iter()
-                        .flat_map(|(name, paths)| {
-                            paths.iter().map(|p| {
-                                Handle::new(
-                                    name.dupe(),
-                                    ModulePath::filesystem(p.to_path_buf()),
-                                    manifest.sys_info.dupe(),
-                                )
+                    Some(
+                        manifest
+                            .srcs
+                            .iter()
+                            .flat_map(|(name, paths)| {
+                                paths.iter().map(|p| {
+                                    Handle::new(
+                                        name.dupe(),
+                                        ModulePath::filesystem(p.to_path_buf()),
+                                        manifest.sys_info.dupe(),
+                                    )
+                                })
                             })
-                        })
-                    .collect())
+                            .collect(),
+                    )
                 }
                 Include::Path(path) => {
                     let target = this.path_lookup.get(path)?;
@@ -176,6 +186,36 @@ impl SourceDatabase for BuckSourceDatabase {
             manifest.sys_info.dupe(),
         )
     }
+
+    fn add_file_to_open_set(&mut self, path: PathBuf) -> anyhow::Result<bool> {
+        let include = Include::Path(path);
+        if self.includes.contains(&include) {
+            return Ok(false);
+        }
+
+        self.includes.insert(include);
+        let files = self.includes.iter().filter_map(|i| match i {
+            Include::Path(p) => Some(p),
+            _ => None,
+        });
+        let raw_db = query_source_db(files, &self.cwd)?;
+        Ok(self.update_with_target_manifest(raw_db))
+    }
+
+    fn remove_file_from_open_set(&mut self, path: PathBuf) -> anyhow::Result<bool> {
+        let include = Include::Path(path);
+        if !self.includes.contains(&include) {
+            return Ok(false);
+        }
+
+        self.includes.remove(&include);
+        let files = self.includes.iter().filter_map(|i| match i {
+            Include::Path(p) => Some(p),
+            _ => None,
+        });
+        let raw_db = query_source_db(files, &self.cwd)?;
+        Ok(self.update_with_target_manifest(raw_db))
+    }
 }
 
 #[cfg(test)]
@@ -187,6 +227,19 @@ mod tests {
     use starlark_map::smallset;
 
     use super::*;
+
+    impl BuckSourceDatabase {
+        fn from_target_manifest_db(raw_db: TargetManifestDatabase, files: &SmallSet<PathBuf>) -> Self {
+            let mut new = Self {
+                db: SmallMap::new(),
+                path_lookup: SmallMap::new(),
+                includes: files.iter().map(|p| Include::Path(p.to_path_buf())).collect(),
+                cwd: PathBuf::new(),
+            };
+            new.update_with_target_manifest(raw_db);
+            new
+        }
+    }
 
     fn get_db() -> (BuckSourceDatabase, PathBuf) {
         let raw_db = TargetManifestDatabase::get_test_database();

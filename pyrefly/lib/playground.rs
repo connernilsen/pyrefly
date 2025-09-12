@@ -77,6 +77,14 @@ impl SourceDatabase for PlaygroundSourceDatabase {
             .map_or_else(ModuleName::unknown, |(n, _)| n.dupe());
         Handle::new(name, path, self.sys_info.dupe())
     }
+
+    fn add_file_to_open_set(&mut self, _: PathBuf) -> anyhow::Result<bool> {
+        Ok(false)
+    }
+
+    fn remove_file_from_open_set(&mut self, _: PathBuf) -> anyhow::Result<bool> {
+        Ok(false)
+    }
 }
 
 #[derive(Serialize)]

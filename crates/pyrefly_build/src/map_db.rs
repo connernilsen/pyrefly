@@ -8,6 +8,7 @@
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::path::Path;
+use std::path::PathBuf;
 
 use dupe::Dupe as _;
 use pyrefly_python::module_name::ModuleName;
@@ -74,5 +75,13 @@ impl SourceDatabase for MapDatabase {
             Some((name, _)) => Handle::new(name.dupe(), module_path, self.1.dupe()),
             None => Handle::new(ModuleName::unknown(), module_path, self.1.dupe()),
         }
+    }
+
+    fn add_file_to_open_set(&mut self, _: PathBuf) -> anyhow::Result<bool> {
+        Ok(false)
+    }
+
+    fn remove_file_from_open_set(&mut self, _: PathBuf) -> anyhow::Result<bool> {
+        Ok(false)
     }
 }

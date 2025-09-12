@@ -162,7 +162,6 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use starlark_map::small_map::SmallMap;
-use starlark_map::small_set::SmallSet;
 
 use crate::commands::lsp::IndexingMode;
 use crate::config::config::ConfigFile;
@@ -924,29 +923,6 @@ impl Server {
         open_files: &RwLock<HashMap<PathBuf, Arc<String>>>,
         transaction: &mut Transaction<'_>,
     ) -> Vec<Handle> {
-        open_files
-            .read()
-            .keys()
-            .map(|p| {
-                (
-                    p,
-                    state.config_finder().python_file(
-                        ModuleName::unknown(),
-                        &ModulePath::filesystem(p.to_path_buf()),
-                    ),
-                )
-            })
-            .fold(
-                SmallMap::new(),
-                |mut acc: SmallMap<_, SmallSet<PathBuf>>, (path, config)| {
-                    acc.entry(config).or_default().insert(path.to_path_buf());
-                    acc
-                },
-            )
-            .into_iter()
-            .for_each(|(config, paths)| {
-                let _ = config.setup_sourcedb_for_files(&paths);
-            });
         let handles = open_files
             .read()
             .keys()
@@ -1008,6 +984,19 @@ impl Server {
                     TypeErrorDisplayStatus::EnabledInConfigFile
                 }
             }
+        }
+    }
+
+    fn reload_config_for_new_file(
+        &self, file: &Path, opened: bool
+    ) {
+        let config_finder = self.state.config_finder();
+        let config = config_finder.python_file(
+            ModuleName::unknown(),
+            &ModulePath::filesystem(file.to_path_buf()),
+        );
+        if let Ok(changed) = config.add_remove_file_from_sourcedb(file, opened) && changed {
+            self.invalidate_find_for_config(config);
         }
     }
 
@@ -1248,6 +1237,7 @@ impl Server {
         } else {
             None
         };
+        self.reload_config_for_new_file(&uri, true);
         self.version_info
             .lock()
             .insert(uri.clone(), params.text_document.version);
@@ -1308,6 +1298,7 @@ impl Server {
         let uri = params.text_document.uri.to_file_path().unwrap();
         self.version_info.lock().remove(&uri);
         self.open_files.write().remove(&uri);
+        self.reload_config_for_new_file(&uri, false);
         self.connection
             .publish_diagnostics_for_uri(params.text_document.uri, Vec::new(), None);
         let state = self.state.dupe();
@@ -1989,6 +1980,10 @@ impl Server {
 
     fn invalidate_config(&self) {
         self.invalidate(|t| t.invalidate_config());
+    }
+
+    fn invalidate_find_for_config(&self, config: ArcId<ConfigFile>) {
+        self.invalidate(|t| t.invalidate_for_build_system_config(config));
     }
 }
 
